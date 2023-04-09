@@ -44,9 +44,9 @@ def run(imagedir, cfg, network, viz=False):
     slam = DPVO(cfg, network, ht=480, wd=640, viz=viz)
 
     for t, (image, intrinsics) in enumerate(video_iterator(imagedir)):
-        if viz: 
+        if viz:
             show_image(image, 1)
-        
+
         with Timer("SLAM", enabled=False):
             slam(t, image, intrinsics)
 
@@ -71,8 +71,8 @@ def ate(traj_ref, traj_est, timestamps):
         positions_xyz=traj_ref[:,:3],
         orientations_quat_wxyz=traj_ref[:,3:],
         timestamps=timestamps)
-    
-    result = main_ape.ape(traj_ref, traj_est, est_name='traj', 
+
+    result = main_ape.ape(traj_ref, traj_est, est_name='traj',
         pose_relation=PoseRelation.translation_part, align=True, correct_scale=True)
 
     return result.stats["rmse"]
@@ -92,6 +92,8 @@ def evaluate(config, net, split="validation", trials=1, plot=False, save=False):
 
     results = {}
     all_results = []
+
+    scenes = [""]
     for i, scene in enumerate(scenes):
 
         results[scene] = []
@@ -101,7 +103,7 @@ def evaluate(config, net, split="validation", trials=1, plot=False, save=False):
             if split == 'test':
                 scene_path = os.path.join("datasets/mono", scene)
                 traj_ref = osp.join("datasets/mono", "mono_gt", scene + ".txt")
-            
+
             elif split == 'validation':
                 scene_path = os.path.join("datasets/TartanAir", scene, "image_left")
                 traj_ref = osp.join("datasets/TartanAir", scene, "pose_left.txt")
@@ -167,6 +169,9 @@ if __name__ == '__main__':
     print(cfg)
 
     torch.manual_seed(1234)
+
+    args.viz = False
+    args.save_trajectory = True
 
     if args.id >= 0:
         scene_path = os.path.join("datasets/mono", test_split[args.id])
