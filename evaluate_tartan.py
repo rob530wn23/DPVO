@@ -44,7 +44,6 @@ def video_iterator(imagedir, ext=".png", preload=True):
 @torch.no_grad()
 def run(imagedir, cfg, network, viz=False):
     slam = DPVO(cfg, network, ht=480, wd=640, viz=viz)
-
     for t, (image, intrinsics) in enumerate(video_iterator(imagedir)):
         if viz: 
             show_image(image, 1)
