@@ -75,7 +75,7 @@ class Update(nn.Module):
 
     def forward(self, net, inp, corr, flow, ii, jj, kk):
         """ update operator """
-        # print("net", net.shape)
+
         net = net + inp + self.corr(corr)
         net = self.norm(net)
 

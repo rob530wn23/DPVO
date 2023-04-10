@@ -198,7 +198,6 @@ class DPVO:
         return coords.permute(0, 1, 4, 2, 3).contiguous()
 
     def append_factors(self, ii, jj):
-        print('================ add =============')
         self.jj = torch.cat([self.jj, jj])
         self.kk = torch.cat([self.kk, ii])
         self.ii = torch.cat([self.ii, self.ix[ii]])
@@ -277,38 +276,6 @@ class DPVO:
         to_remove = self.ix[self.kk] < self.n - self.cfg.REMOVAL_WINDOW
         self.remove_factors(to_remove)
 
-    def update(self):
-        with Timer("other", enabled=self.enable_timing):
-            coords = self.reproject()
-
-            with autocast(enabled=True):
-                corr = self.corr(coords)
-                ctx = self.imap[:, self.kk % (self.M * self.mem)]
-                self.net, (delta, weight, _) = \
-                    self.network.update(self.net, ctx, corr, None, self.ii, self.jj, self.kk)
-
-            lmbda = torch.as_tensor([1e-4], device="cuda")
-            weight = weight.float()
-            target = coords[..., self.P // 2, self.P // 2] + delta.float()
-
-        with Timer("BA", enabled=self.enable_timing):
-            t0 = self.n - self.cfg.OPTIMIZATION_WINDOW if self.is_initialized else 1
-            t0 = max(t0, 1)
-
-            try:
-                fastba.BA(self.poses, self.patches, self.intrinsics,
-                          target, weight, lmbda, self.ii, self.jj, self.kk, t0, self.n, 2)
-                coords = self.reproject()
-                fitting_error = (coords[..., self.P // 2, self.P // 2] - target).pow(2).mean().item()
-                print("Fitting error ", fitting_error)
-            except:
-                print("Warning BA failed...")
-
-            points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics,
-                                      self.ix[:self.m])
-            points = (points[..., 1, 1, :3] / points[..., 1, 1, 3:]).reshape(-1, 3)
-            self.points_[:len(points)] = points[:]
-
     # def update(self):
     #     with Timer("other", enabled=self.enable_timing):
     #         coords = self.reproject()
@@ -327,63 +294,95 @@ class DPVO:
     #         t0 = self.n - self.cfg.OPTIMIZATION_WINDOW if self.is_initialized else 1
     #         t0 = max(t0, 1)
     #
-    #         best_fit = 1e10
-    #         sample_ratio = 0.0
-    #         best_poses = None
-    #         best_patches = None
-    #         pose_shape = self.poses_.shape
-    #         patch_shape = self.patches_.shape
-    #         print("---------------------------------")
-    #         for i in range(1):
-    #             try:
-    #                 # assert torch.sum(self.poses==self.poses_)
-    #                 self.tmp_poses = self.poses.clone()
-    #                 self.tmp_patches = self.patches.clone()
-    #                 # print("poses ", type(self.poses), self.poses.shape)
-    #                 # print("poses_ ", type(self.poses_), self.poses_.shape)
-    #                 # print("patches ", type(self.patches), self.patches.shape)
-    #                 # print("patches_ ", type(self.patches_), self.patches_.shape)
-    #                 # print("intrinsics ", type(self.intrinsics), self.intrinsics.shape)
-    #                 # print("target ", type(target), target.shape)
-    #                 # print("weight ", type(weight), weight.shape)
-    #                 # print("lmbda ", type(lmbda), lmbda)
-    #                 # print("ii ", type(self.ii), self.ii.shape)
-    #                 # print("jj ", type(self.jj), self.jj.shape)
-    #                 # print("kk ", type(self.kk), self.kk.shape)
-    #                 # print("t0 ", type(t0), t0)
-    #                 # print("n ", type(self.n), self.n)
-    #                 # weight = torch.ones_like(weight)
-    #                 # TODO(ransac): subsample patches in here, probably easier
-    #                 # ii: index of the frames of the patches
-    #                 # jj: index of the frames of the poses
-    #                 # kk: index of the patches
-    #                 sample_num = int(len(self.ii) * sample_ratio)
-    #                 sample_idx = np.random.choice(len(self.ii), sample_num, replace=False)
-    #                 tmp_weight = weight.clone()
-    #                 tmp_weight[0, sample_idx] = 0
-    #                 fastba.BA(self.tmp_poses, self.tmp_patches, self.intrinsics,
-    #                           target, tmp_weight, lmbda, self.ii, self.jj,
-    #                           self.kk, t0, self.n, 2)
-    #                 # compute the residual with the new poses
-    #                 coords = self.reproject(poses=self.tmp_poses, patches=self.tmp_patches)
-    #                 fitting_error = (coords[..., self.P // 2, self.P // 2] - target).pow(2).mean().item()
+    #         try:
+    #             fastba.BA(self.poses, self.patches, self.intrinsics,
+    #                       target, weight, lmbda, self.ii, self.jj, self.kk, t0, self.n, 2)
+    #             coords = self.reproject()
+    #             fitting_error = (coords[..., self.P // 2, self.P // 2] - target).pow(2).mean().item()
+    #             print("Fitting error ", fitting_error)
+    #         except:
+    #             print("Warning BA failed...")
     #
-    #                 print("Fitting error ", fitting_error)
-    #                 if fitting_error < best_fit:
-    #                     print("New best fit ", fitting_error)
-    #                     best_fit = fitting_error
-    #                     best_poses = self.tmp_poses.clone()
-    #                     best_patches = self.tmp_patches.clone()
-    #             except:
-    #                 print("Warning BA failed...")
-    #
-    #         self.poses_ = best_poses.view(*pose_shape)
-    #         self.patches_ =  best_patches.view(*patch_shape)
-    #         assert torch.sum(self.poses == self.poses_)
     #         points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics,
     #                                   self.ix[:self.m])
     #         points = (points[..., 1, 1, :3] / points[..., 1, 1, 3:]).reshape(-1, 3)
     #         self.points_[:len(points)] = points[:]
+
+    def update(self):
+        with Timer("other", enabled=self.enable_timing):
+            coords = self.reproject()
+
+            with autocast(enabled=True):
+                corr = self.corr(coords)
+                ctx = self.imap[:, self.kk % (self.M * self.mem)]
+                self.net, (delta, weight, _) = \
+                    self.network.update(self.net, ctx, corr, None, self.ii, self.jj, self.kk)
+
+            lmbda = torch.as_tensor([1e-4], device="cuda")
+            weight = weight.float()
+            target = coords[..., self.P // 2, self.P // 2] + delta.float()
+
+        with Timer("BA", enabled=self.enable_timing):
+            t0 = self.n - self.cfg.OPTIMIZATION_WINDOW if self.is_initialized else 1
+            t0 = max(t0, 1)
+
+            best_fit = 1e10
+            sample_ratio = 0.2
+            best_poses = None
+            best_patches = None
+            pose_shape = self.poses_.shape
+            patch_shape = self.patches_.shape
+            print("---------------------------------")
+            for i in range(5):
+                try:
+                    # assert torch.sum(self.poses==self.poses_)
+                    self.tmp_poses = self.poses.clone()
+                    self.tmp_patches = self.patches.clone()
+                    # print("poses ", type(self.poses), self.poses.shape)
+                    # print("poses_ ", type(self.poses_), self.poses_.shape)
+                    # print("patches ", type(self.patches), self.patches.shape)
+                    # print("patches_ ", type(self.patches_), self.patches_.shape)
+                    # print("intrinsics ", type(self.intrinsics), self.intrinsics.shape)
+                    # print("target ", type(target), target.shape)
+                    # print("weight ", type(weight), weight.shape)
+                    # print("lmbda ", type(lmbda), lmbda)
+                    # print("ii ", type(self.ii), self.ii.shape)
+                    # print("jj ", type(self.jj), self.jj.shape)
+                    # print("kk ", type(self.kk), self.kk.shape)
+                    # print("t0 ", type(t0), t0)
+                    # print("n ", type(self.n), self.n)
+                    # weight = torch.ones_like(weight)
+                    # TODO(ransac): subsample patches in here, probably easier
+                    # ii: index of the frames of the patches
+                    # jj: index of the frames of the poses
+                    # kk: index of the patches
+                    sample_num = int(len(self.ii) * sample_ratio)
+                    sample_idx = np.random.choice(len(self.ii), sample_num, replace=False)
+                    tmp_weight = weight.clone()
+                    tmp_weight[0, sample_idx] = 0
+                    fastba.BA(self.tmp_poses, self.tmp_patches, self.intrinsics,
+                              target, tmp_weight, lmbda, self.ii, self.jj,
+                              self.kk, t0, self.n, 2)
+                    # compute the residual with the new poses
+                    coords = self.reproject(poses=self.tmp_poses, patches=self.tmp_patches)
+                    fitting_error = (coords[..., self.P // 2, self.P // 2] - target).pow(2).mean().item()
+
+                    print("Fitting error ", fitting_error)
+                    if fitting_error < best_fit:
+                        print("New best fit ", fitting_error)
+                        best_fit = fitting_error
+                        best_poses = self.tmp_poses.clone()
+                        best_patches = self.tmp_patches.clone()
+                except:
+                    print("Warning BA failed...")
+
+            self.poses_ = best_poses.view(*pose_shape)
+            self.patches_ =  best_patches.view(*patch_shape)
+            assert torch.sum(self.poses == self.poses_)
+            points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics,
+                                      self.ix[:self.m])
+            points = (points[..., 1, 1, :3] / points[..., 1, 1, 3:]).reshape(-1, 3)
+            self.points_[:len(points)] = points[:]
 
     def __edges_all(self):
         return flatmeshgrid(

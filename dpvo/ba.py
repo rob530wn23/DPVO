@@ -107,10 +107,7 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
 
     coords, v, (Ji, Jj, Jz) = \
         pops.transform(poses, patches, intrinsics, ii, jj, kk, jacobian=True)
-    print("Ji shape", Ji.shape)
-    print("Jj shape", Jj.shape)
-    print("Jz shape", Jz.shape)
-    pdb.set_trace()
+
     p = coords.shape[3]
     # the residual!
     r = targets - coords[...,p//2,p//2,:]
