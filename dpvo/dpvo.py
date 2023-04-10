@@ -1,5 +1,3 @@
-import pdb
-
 import torch
 import numpy as np
 import torch.nn.functional as F
@@ -118,6 +116,7 @@ class DPVO:
 
         # if self.cfg.MIXED_PRECISION:
         #     self.network.half()
+
 
     def start_viewer(self):
         from dpviewer import Viewer
@@ -390,38 +389,37 @@ class DPVO:
             torch.arange(0, self.n, device="cuda"), indexing='ij')
 
     def __edges_forw(self):
-        r = self.cfg.PATCH_LIFETIME
+        r=self.cfg.PATCH_LIFETIME
         t0 = self.M * max((self.n - r), 0)
         t1 = self.M * max((self.n - 1), 0)
         return flatmeshgrid(
             torch.arange(t0, t1, device="cuda"),
-            torch.arange(self.n - 1, self.n, device="cuda"), indexing='ij')
+            torch.arange(self.n-1, self.n, device="cuda"), indexing='ij')
 
     def __edges_back(self):
-        r = self.cfg.PATCH_LIFETIME
+        r=self.cfg.PATCH_LIFETIME
         t0 = self.M * max((self.n - 1), 0)
         t1 = self.M * max((self.n - 0), 0)
         return flatmeshgrid(torch.arange(t0, t1, device="cuda"),
-                            torch.arange(max(self.n - r, 0), self.n, device="cuda"), indexing='ij')
+            torch.arange(max(self.n-r, 0), self.n, device="cuda"), indexing='ij')
 
     def __call__(self, tstamp, image, intrinsics):
         """ track new frame """
 
-        if (self.n + 1) >= self.N:
-            raise Exception(
-                f'The buffer size is too small. You can increase it using "--buffer {self.N * 2}"')
+        if (self.n+1) >= self.N:
+            raise Exception(f'The buffer size is too small. You can increase it using "--buffer {self.N*2}"')
 
         if self.viewer is not None:
             self.viewer.update_image(image)
-        # image is downsampled by 4, 120 * 160
-        image = 2 * (image[None, None] / 255.0) - 0.5
 
+        image = 2 * (image[None,None] / 255.0) - 0.5
+        
         with autocast(enabled=self.cfg.MIXED_PRECISION):
             fmap, gmap, imap, patches, _, clr = \
                 self.network.patchify(image,
-                                      patches_per_image=self.cfg.PATCHES_PER_FRAME,
-                                      gradient_bias=self.cfg.GRADIENT_BIAS,
-                                      return_color=True)
+                    patches_per_image=self.cfg.PATCHES_PER_FRAME, 
+                    gradient_bias=self.cfg.GRADIENT_BIAS, 
+                    return_color=True)
 
         ### update state attributes ###
         self.tlist.append(tstamp)
@@ -429,7 +427,7 @@ class DPVO:
         self.intrinsics_[self.n] = intrinsics / self.RES
 
         # color info for visualization
-        clr = (clr[0, :, [2, 1, 0]] + 0.5) * (255.0 / 2)
+        clr = (clr[0,:,[2,1,0]] + 0.5) * (255.0 / 2)
         self.colors_[self.n] = clr.to(torch.uint8)
 
         self.index_[self.n + 1] = self.n + 1
@@ -437,21 +435,21 @@ class DPVO:
 
         if self.n > 1:
             if self.cfg.MOTION_MODEL == 'DAMPED_LINEAR':
-                P1 = SE3(self.poses_[self.n - 1])
-                P2 = SE3(self.poses_[self.n - 2])
-
+                P1 = SE3(self.poses_[self.n-1])
+                P2 = SE3(self.poses_[self.n-2])
+                
                 xi = self.cfg.MOTION_DAMPING * (P1 * P2.inv()).log()
                 tvec_qvec = (SE3.exp(xi) * P1).data
                 self.poses_[self.n] = tvec_qvec
             else:
-                tvec_qvec = self.poses[self.n - 1]
+                tvec_qvec = self.poses[self.n-1]
                 self.poses_[self.n] = tvec_qvec
 
         # TODO better depth initialization
-        patches[:, :, 2] = torch.rand_like(patches[:, :, 2, 0, 0, None, None])
+        patches[:,:,2] = torch.rand_like(patches[:,:,2,0,0,None,None])
         if self.is_initialized:
-            s = torch.median(self.patches_[self.n - 3:self.n, :, 2])
-            patches[:, :, 2] = s
+            s = torch.median(self.patches_[self.n-3:self.n,:,2])
+            patches[:,:,2] = s
 
         self.patches_[self.n] = patches
 
@@ -461,7 +459,7 @@ class DPVO:
         self.fmap1_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 1, 1)
         self.fmap2_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 4, 4)  # downsample for 16 times
 
-        self.counter += 1
+        self.counter += 1        
         if self.n > 0 and not self.is_initialized:
             if self.motion_probe() < 2.0:
                 self.delta[self.counter - 1] = (self.counter - 2, Id[0])
@@ -471,16 +469,22 @@ class DPVO:
         self.m += self.M
 
         # relative pose
-        # TODO(ransac): might need to modify this
         self.append_factors(*self.__edges_forw())
         self.append_factors(*self.__edges_back())
 
         if self.n == 8 and not self.is_initialized:
-            self.is_initialized = True
+            self.is_initialized = True            
 
             for itr in range(12):
                 self.update()
-
+        
         elif self.is_initialized:
             self.update()
             self.keyframe()
+
+            
+
+
+
+
+

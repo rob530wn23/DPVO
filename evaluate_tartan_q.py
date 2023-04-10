@@ -14,6 +14,8 @@ from dpvo.config import cfg
 from dpvo.data_readers.tartan import test_split as val_split
 from dpvo.plot_utils import plot_trajectory, save_trajectory_tum_format
 
+import copy
+
 test_split = \
     ["MH%03d"%i for i in range(8)] + \
     ["ME%03d"%i for i in range(8)]
@@ -43,14 +45,23 @@ def video_iterator(imagedir, ext=".png", preload=True):
 def run(imagedir, cfg, network, viz=False):
     slam = DPVO(cfg, network, ht=480, wd=640, viz=viz)
 
+    num_bits = 2
+
+    qvo = copy.deepcopy(slam.network)
+    trained_fnet = slam.network.patchify.fnet
+    trained_inet = slam.network.patchify.inet
+    qvo.swap_patchifier(num_bits, trained_fnet, trained_inet)
+
+    slam.network = qvo
+
+
     for t, (image, intrinsics) in enumerate(video_iterator(imagedir)):
         if viz:
             show_image(image, 1)
-        # resample patches every time
+
         with Timer("SLAM", enabled=False):
             slam(t, image, intrinsics)
 
-    # final optimization
     for _ in range(12):
         slam.update()
 
@@ -93,6 +104,8 @@ def evaluate(config, net, split="validation", trials=1, plot=False, save=False):
 
     results = {}
     all_results = []
+
+    # scenes = [""]
     for i, scene in enumerate(scenes):
 
         results[scene] = []
@@ -168,6 +181,9 @@ if __name__ == '__main__':
     print(cfg)
 
     torch.manual_seed(1234)
+
+    args.viz = False
+    args.save_trajectory = True
 
     if args.id >= 0:
         scene_path = os.path.join("datasets/mono", test_split[args.id])

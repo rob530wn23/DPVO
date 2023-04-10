@@ -1,5 +1,3 @@
-import pdb
-
 import torch
 import torch.nn.functional as F
 
@@ -57,6 +55,7 @@ def transform(poses, patches, intrinsics, ii, jj, kk, depth=False, valid=False, 
 
     # backproject: 2d pixel frame to 3D point camera frame
     X0 = iproj(patches[:,kk], intrinsics[:,ii])
+
     # transform
     Gij = poses[:, jj] * poses[:, ii].inv()
 

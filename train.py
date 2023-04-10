@@ -1,5 +1,3 @@
-import pdb
-
 import cv2
 import os
 import argparse
@@ -49,6 +47,7 @@ def train(args):
 
     # legacy ddp code
     rank = 0
+
     db = dataset_factory(['tartan'], datapath="datasets/TartanAir", n_frames=args.n_frames)
     train_loader = DataLoader(db, batch_size=1, shuffle=True, num_workers=4)
 
@@ -80,8 +79,7 @@ def train(args):
 
             # fix poses to gt for first 1k steps
             so = total_steps < 1000 and args.ckpt is None
-            print('poses ', poses.shape)
-            pdb.set_trace()
+
             poses = SE3(poses).inv()
             traj = net(images, poses, disps, intrinsics, M=1024, STEPS=18, structure_only=so)
 

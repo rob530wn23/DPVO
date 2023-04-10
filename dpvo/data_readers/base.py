@@ -25,7 +25,6 @@ class RGBDDataset(data.Dataset):
         self.aug = aug
         self.sample = sample
 
-
         self.n_frames = n_frames
         self.fmin = fmin # exclude very easy examples
         self.fmax = fmax # exclude very hard examples

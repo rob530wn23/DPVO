@@ -85,22 +85,8 @@ def block_show(A):
     plt.imshow(A[0].detach().cpu().numpy())
     plt.show()
 
-def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, ep=100.0,
-       PRINT=False, fixedp=1, structure_only=False):
+def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, ep=100.0, PRINT=False, fixedp=1, structure_only=False):
     """ bundle adjustment """
-    # print the shape of all tensors
-    print('poses', type(poses), poses.shape)
-    print('patches', type(patches), patches.shape)
-    print('intrinsics', type(intrinsics), intrinsics.shape)
-    print('targets', type(targets), targets.shape)
-    print('weights', type(weights), weights.shape)
-    print('lmbda', type(lmbda), lmbda)
-    print('ii', type(ii), ii.shape)
-    print('jj', type(jj), jj.shape)
-    print('kk', type(kk), kk.shape)
-    print('bounds', type(bounds), bounds)
-    print('ep', type(ep), ep)
-    pdb.set_trace()
 
     b = 1
     n = max(ii.max().item(), jj.max().item()) + 1
