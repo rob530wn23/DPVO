@@ -223,10 +223,10 @@ class BasicEncoder4(nn.Module):
 
 
 class QuantizedEncoder(nn.Module):
-    def __init__(self, quant_args):
+    def __init__(self, num_bits=8):
         super(QuantizedEncoder, self).__init__()
-        self.encoder = BasicEncoder4()
-        self.quant_args = 8
+        self.encoder = None
+        self.num_bits = num_bits
 
     def copy_params(self, encoder):
         self.encoder = copy.deepcopy(encoder)
@@ -237,7 +237,6 @@ class QuantizedEncoder(nn.Module):
 
 
     def quantize_params(self):
-
         def quantize_helper(q_layers):
             for item in q_layers:
                 getattr(self.encoder, item).quantize_params()
@@ -260,7 +259,7 @@ class QuantizedEncoder(nn.Module):
                 }
 
                 b = layers[item].bias
-                new_layer = QConv2d('uniform', 6, W, b, **kwargs)
+                new_layer = QConv2d('uniform', self.num_bits, W, b, **kwargs)
                 setattr(self.encoder, item, new_layer)
 
         quantize_helper(conv_layers)

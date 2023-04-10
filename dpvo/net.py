@@ -19,6 +19,10 @@ from .utils import *
 from .ba import BA
 from . import projective_ops as pops
 
+
+from .q_extractor import QuantizedEncoder
+
+
 autocast = torch.cuda.amp.autocast
 import matplotlib.pyplot as plt
 
@@ -37,7 +41,7 @@ class Update(nn.Module):
             nn.Linear(DIM, DIM),
             nn.ReLU(inplace=True),
             nn.Linear(DIM, DIM))
-        
+
         self.norm = nn.LayerNorm(DIM, eps=1e-3)
 
         self.agg_kk = SoftAgg(DIM)
@@ -123,7 +127,7 @@ class Patchifier(nn.Module):
 
             coords = torch.stack([x, y], dim=-1).float()
             g = altcorr.patchify(g[0,:,None], coords, 0).view(n, 3 * patches_per_image)
-            
+
             ix = torch.argsort(g, dim=1)
             x = torch.gather(x, 1, ix[:, -patches_per_image:])
             y = torch.gather(y, 1, ix[:, -patches_per_image:])
@@ -131,7 +135,7 @@ class Patchifier(nn.Module):
         else:
             x = torch.randint(1, w-1, size=[n, patches_per_image], device="cuda")
             y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
-        
+
         coords = torch.stack([x, y], dim=-1).float()
         imap = altcorr.patchify(imap[0], coords, 0).view(b, -1, DIM, 1, 1)
         gmap = altcorr.patchify(fmap[0], coords, P//2).view(b, -1, 128, P, P)
@@ -174,6 +178,7 @@ class VONet(nn.Module):
     def __init__(self, use_viewer=False):
         super(VONet, self).__init__()
         self.P = 3
+
         self.patchify = Patchifier(self.P)
         self.update = Update(self.P)
 
@@ -181,9 +186,18 @@ class VONet(nn.Module):
         self.RES = 4
 
 
+    def swap_patchifier(self, num_bits, trained_fnet, trained_inet):
+        self.patchify = QuantizedPatchifier(self.P, num_bits=num_bits)
+        self.patchify.copy_and_quantize(trained_fnet, trained_inet)
+
+
+
     @autocast(enabled=False)
     def forward(self, images, poses, disps, intrinsics, M=1024, STEPS=12, P=1, structure_only=False, rescale=False):
         """ Estimates SE3 or Sim3 between pair of frames """
+
+        if not self.loaded_weights:
+            raise RuntimeError("VONet: Patchifier weights not loaded")
 
         images = 2 * (images / 255.0) - 0.5
         intrinsics = intrinsics / 4.0
@@ -207,7 +221,7 @@ class VONet(nn.Module):
 
         imap = imap.view(b, -1, DIM)
         net = torch.zeros(b, len(kk), DIM, device="cuda", dtype=torch.float)
-        
+
         Gs = SE3.IdentityLike(poses)
 
         if structure_only:
@@ -215,7 +229,7 @@ class VONet(nn.Module):
 
         traj = []
         bounds = [-64, -64, w + 64, h + 64]
-        
+
         while len(traj) < STEPS:
             Gs = Gs.detach()
             patches = patches.detach()
@@ -254,7 +268,7 @@ class VONet(nn.Module):
 
             ep = 10
             for itr in range(2):
-                Gs, patches = BA(Gs, patches, intrinsics, target, weight, lmbda, ii, jj, kk, 
+                Gs, patches = BA(Gs, patches, intrinsics, target, weight, lmbda, ii, jj, kk,
                     bounds, ep=ep, fixedp=1, structure_only=structure_only)
 
             kl = torch.as_tensor(0)
@@ -268,3 +282,83 @@ class VONet(nn.Module):
 
         return traj
 
+
+
+class QuantizedPatchifier(nn.Module):
+    def __init__(self, patch_size=3, num_bits=8):
+        super(QuantizedPatchifier, self).__init__()
+        self.patch_size = patch_size
+        self.num_bits = num_bits
+        self.fnet = None
+        self.inet = None
+
+
+    def copy_and_quantize(self, trained_fnet, trained_inet):
+        self.fnet = QuantizedEncoder(self.num_bits)
+        self.inet = QuantizedEncoder(self.num_bits)
+
+        self.fnet.copy_params(trained_fnet)
+        self.inet.copy_params(trained_inet)
+
+        self.fnet.quantize_params()
+        self.inet.quantize_params()
+
+
+    def __image_gradient(self, images):
+        gray = ((images + 0.5) * (255.0 / 2)).sum(dim=2)
+        dx = gray[...,:-1,1:] - gray[...,:-1,:-1]
+        dy = gray[...,1:,:-1] - gray[...,:-1,:-1]
+        g = torch.sqrt(dx**2 + dy**2)
+        g = F.avg_pool2d(g, 4, 4)
+        return g
+
+
+    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False):
+        """ extract patches from input images """
+
+        if self.inet == None or self.fnet == None:
+            raise Exception("Patchifier not initialized")
+
+        fmap = self.fnet.encoder(images) / 4.0
+        imap = self.inet.encoder(images) / 4.0
+
+        b, n, c, h, w = fmap.shape
+        P = self.patch_size
+
+        # bias patch selection towards regions with high gradient
+        if gradient_bias:
+            g = self.__image_gradient(images)
+            x = torch.randint(1, w-1, size=[n, 3*patches_per_image], device="cuda")
+            y = torch.randint(1, h-1, size=[n, 3*patches_per_image], device="cuda")
+
+            coords = torch.stack([x, y], dim=-1).float()
+            g = altcorr.patchify(g[0,:,None], coords, 0).view(n, 3 * patches_per_image)
+
+            ix = torch.argsort(g, dim=1)
+            x = torch.gather(x, 1, ix[:, -patches_per_image:])
+            y = torch.gather(y, 1, ix[:, -patches_per_image:])
+
+        else:
+            x = torch.randint(1, w-1, size=[n, patches_per_image], device="cuda")
+            y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
+
+        coords = torch.stack([x, y], dim=-1).float()
+        imap = altcorr.patchify(imap[0], coords, 0).view(b, -1, DIM, 1, 1)
+        gmap = altcorr.patchify(fmap[0], coords, P//2).view(b, -1, 128, P, P)
+
+        if return_color:
+            clr = altcorr.patchify(images[0], 4*(coords + 0.5), 0).view(b, -1, 3)
+
+        if disps is None:
+            disps = torch.ones(b, n, h, w, device="cuda")
+
+        grid, _ = coords_grid_with_index(disps, device=fmap.device)
+        patches = altcorr.patchify(grid[0], coords, P//2).view(b, -1, 3, P, P)
+
+        index = torch.arange(n, device="cuda").view(n, 1)
+        index = index.repeat(1, patches_per_image).reshape(-1)
+
+        if return_color:
+            return fmap, gmap, imap, patches, index, clr
+
+        return fmap, gmap, imap, patches, index
