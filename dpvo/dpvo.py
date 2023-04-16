@@ -167,7 +167,11 @@ class DPVO:
         poses = lietorch.stack(poses, dim=0)
         poses = poses.inv().data.cpu().numpy()
         tstamps = np.array(self.tlist, dtype=np.float)
+        
+        np.savetxt('poses.txt', poses)
+        np.savetxt('tstamps.txt', tstamps)
 
+        print("Saved poses and tstamps")
         if self.viewer is not None:
             self.viewer.join()
 
@@ -294,6 +298,9 @@ class DPVO:
             points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics, self.ix[:self.m])
             points = (points[...,1,1,:3] / points[...,1,1,3:]).reshape(-1, 3)
             self.points_[:len(points)] = points[:]
+        
+        if self.counter == 105:
+            torch.save(self.patches.view(self.patches_.shape), "original_patches.pt")
                 
     def __edges_all(self):
         return flatmeshgrid(
@@ -331,7 +338,7 @@ class DPVO:
                 self.network.patchify(image,
                     patches_per_image=self.cfg.PATCHES_PER_FRAME, 
                     gradient_bias=self.cfg.GRADIENT_BIAS, 
-                    return_color=True)
+                    return_color=True, counter = self.counter)
 
         ### update state attributes ###
         self.tlist.append(tstamp)
@@ -395,7 +402,6 @@ class DPVO:
             self.keyframe()
 
             
-
 
 
 

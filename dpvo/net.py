@@ -107,16 +107,31 @@ class Patchifier(nn.Module):
         g = F.avg_pool2d(g, 4, 4)
         return g
 
-    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False):
+    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False, counter=0):
         """ extract patches from input images """
         fmap = self.fnet(images) / 4.0
         imap = self.inet(images) / 4.0
-
+        
         b, n, c, h, w = fmap.shape
         P = self.patch_size
+        # print("w: ", w, "h: ", h) w = 160 h = 120
+        # print("patches_per_image: ", patches_per_image) 96
+        print("counter: ", counter)
+
+        mask_found = False
+        try:
+            print('mask_index/filtered_flow_coordinates{}.npy'.format(counter))
+            filtered_flow_coordinates = np.load('mask_index/filtered_flow_coordinates{}.npy'.format(counter))
+            if np.shape(filtered_flow_coordinates)[0] > 0:
+                print(np.shape(filtered_flow_coordinates))
+                filtered_flow_coordinates = np.floor_divide(filtered_flow_coordinates, 4)
+                mask_found = True
+        except FileNotFoundError:
+            print('file does not exist')
 
         # bias patch selection towards regions with high gradient
         if gradient_bias:
+            
             g = self.__image_gradient(images)
             x = torch.randint(1, w-1, size=[n, 3*patches_per_image], device="cuda")
             y = torch.randint(1, h-1, size=[n, 3*patches_per_image], device="cuda")
@@ -129,12 +144,34 @@ class Patchifier(nn.Module):
             y = torch.gather(y, 1, ix[:, -patches_per_image:])
 
         else:
-            x = torch.randint(1, w-1, size=[n, patches_per_image], device="cuda")
-            y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
+            if mask_found:
+                x = torch.empty([n, patches_per_image], device="cuda")
+                y = torch.empty([n, patches_per_image], device="cuda")
+                for n_ind in range(n):
+                    for patch_ind in range(patches_per_image):
+                        x1 = torch.randint(1, w-1, size=[1, 1], device="cuda")
+                        y1 = torch.randint(1, h-1, size=[1, 1], device="cuda")
+                        if x1 in filtered_flow_coordinates[:,0]:
+                            idx = (filtered_flow_coordinates[:,0] == x).nonzero().flatten()
+                            
+                            while not y1 in filtered_flow_coordinates[idx, 1]:
+                                y1 = torch.randint(1, h-1, size=[1, 1], device="cuda")
+
+                        x[n_ind, patch_ind] = x1
+                        y[n_ind, patch_ind] = y1
+                print("mask found and generated new x and y")
+            else:
+                x = torch.randint(1, w-1, size=[n, patches_per_image], device="cuda")
+                y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
+            print("x: ", x.size())
+            print("y: ", y.size())
         
         coords = torch.stack([x, y], dim=-1).float()
         imap = altcorr.patchify(imap[0], coords, 0).view(b, -1, DIM, 1, 1)
         gmap = altcorr.patchify(fmap[0], coords, P//2).view(b, -1, 128, P, P)
+
+        if counter == 105:
+            torch.save(coords, "coords.pt")
 
         if return_color:
             clr = altcorr.patchify(images[0], 4*(coords + 0.5), 0).view(b, -1, 3)
@@ -179,6 +216,8 @@ class VONet(nn.Module):
 
         self.DIM = DIM
         self.RES = 4
+
+        # self.counter = 0
 
 
     @autocast(enabled=False)
@@ -267,4 +306,3 @@ class VONet(nn.Module):
             traj.append((valid, coords, coords_gt, Gs[:,:n], Ps[:,:n], kl))
 
         return traj
-
