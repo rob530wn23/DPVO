@@ -111,14 +111,27 @@ class Patchifier(nn.Module):
         g = F.avg_pool2d(g, 4, 4)
         return g
 
-    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False):
+    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False, counter=-1):
         """ extract patches from input images """
         fmap = self.fnet(images) / 4.0            # matching features
         imap = self.inet(images) / 4.0            # context features
 
         b, n, c, h, w = fmap.shape
         P = self.patch_size
-
+        
+        # Optical flow integration
+        mask_found = False
+        if counter >= 0:
+            try:
+                print('mask_index/filtered_flow_coordinates{}.npy'.format(counter))
+                filtered_flow_coordinates = np.load('mask_index/filtered_flow_coordinates{}.npy'.format(counter))
+                if np.shape(filtered_flow_coordinates)[0] > 0:
+                    print(np.shape(filtered_flow_coordinates))
+                    filtered_flow_coordinates = np.floor_divide(filtered_flow_coordinates, 4)
+                    mask_found = True
+            except FileNotFoundError:
+                print('file does not exist')
+        
         # bias patch selection towards regions with high gradient
         if gradient_bias:
             g = self.__image_gradient(images)
@@ -133,8 +146,28 @@ class Patchifier(nn.Module):
             y = torch.gather(y, 1, ix[:, -patches_per_image:])
 
         else:
-            x = torch.randint(1, w-1, size=[n, patches_per_image], device="cuda")
-            y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
+            if mask_found: # this is optical flow method
+                x = torch.empty([n, patches_per_image], device="cuda")
+                y = torch.empty([n, patches_per_image], device="cuda")
+                for n_ind in range(n):
+                    for patch_ind in range(patches_per_image):
+                        x1 = torch.randint(1, w-1, size=[1, 1], device="cuda")
+                        y1 = torch.randint(1, h-1, size=[1, 1], device="cuda")
+                        if x1 in filtered_flow_coordinates[:,0]:
+                            idx = (filtered_flow_coordinates[:,0] == x).nonzero().flatten()
+                            
+                            while not y1 in filtered_flow_coordinates[idx, 1]:
+                                y1 = torch.randint(1, h-1, size=[1, 1], device="cuda")
+
+                        x[n_ind, patch_ind] = x1
+                        y[n_ind, patch_ind] = y1
+                print("mask found and generated new x and y")
+            else: # This is original DPVO or RANSAC method
+                x = torch.randint(1, w-1, size=[n, patches_per_image], device="cuda")
+                y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
+            
+            # x = torch.randint(1, w-1, size=[n, patches_per_image], device="cuda")
+            # y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
 
         # coordinates of patches in the latent space
         coords = torch.stack([x, y], dim=-1).float()
